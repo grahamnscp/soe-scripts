@@ -1,0 +1,154 @@
+#!/usr/bin/ruby
+
+# Includes
+require 'rubygems'
+require 'net/ldap'
+require 'xmlrpc/client'
+
+
+# Globals
+#
+# CMDB connection parameters
+$conn = Net::LDAP.new
+$conn.host = "cmdb-server.my-domain.com"
+$conn.port = "389"
+$basedomain = "ou=Servers,dc=my-domain,dc=com"
+
+
+#
+# Function: read_server
+#
+def read_server servername
+
+  filter1 = Net::LDAP::Filter.eq( "objectclass", "managedServer" )
+  filter2 = Net::LDAP::Filter.eq( "hostName", servername )
+  filter = Net::LDAP::Filter.join(filter1, filter2) 
+  attrs = [ ]
+
+  $conn.search(:base => $basedomain,
+               :filter => filter) do |entry|
+    server = entry 
+    return server
+  end
+end
+
+#
+# Function: read_eth0
+#
+def read_eth0 treebase
+
+  filter1 = Net::LDAP::Filter.eq( "objectclass", "networkDevice" )
+  filter2 = Net::LDAP::Filter.eq( "deviceIndex", "1" )
+  filter = Net::LDAP::Filter.join(filter1, filter2) 
+  attrs = [ ]
+
+  $conn.search(:base => treebase,
+               :filter => filter) do |entry|
+    nic0 = entry
+    return nic0
+  end
+end
+
+#
+# Function: cobbler_system_add
+#
+def cobbler_system_add lcobbler
+
+  # cobbler system add --name=NAME --profile=PROFILE --comment=COMMENT --hostname=HOSTNAME \
+  #                    --interface=INTERFACE --mac-address=MAC_ADDRESS --static=STATIC \
+  #                    --ip-address=IP_ADDRESS --subnet=SUBNET --gateway=GATEWAY
+
+  p lcobbler
+
+  $cobbler_remove = "/usr/bin/cobbler system remove --name=" + lcobbler['shortname']
+  $cobbler_add    = "/usr/bin/cobbler system add    --name="        +lcobbler['shortname']+
+                                                  " --profile='"    +lcobbler['profile']+"'"+
+                                                  " --comment='"    +lcobbler['comment']+"'"+
+                                                  " --hostname="    +lcobbler['hostname']+
+                                                  " --mac-address=" +lcobbler['macaddress']+
+                                                  " --ip-address="  +lcobbler['ipaddress']+
+                                                  " --subnet="      +lcobbler['netmask']+
+                                                  " --gateway="     +lcobbler['gateway']+
+                                                  " --static=True" 
+
+  # Run the cobbler commands
+  puts 
+  puts "Removing any existing profile for system: "
+  puts $cobbler_remove
+  system($cobbler_remove)
+
+  puts 
+  puts "Adding new profile for system: "
+  puts $cobbler_add
+  system($cobbler_add)
+
+  puts 
+  systemlist = `/usr/bin/cobbler system list`
+  puts "Cobbler Systems: "
+  puts systemlist.to_s
+end
+
+
+# 
+# Main
+#
+BEGIN { $VERBOSE = nil }
+
+fqdn = ARGV[0]
+
+if fqdn.nil? then
+  puts
+  puts "  Usage: cmdbtocobbler <CMDB fqdn>"
+  puts
+  exit 1
+end
+
+puts "Processing host: " + fqdn + " .."
+
+# Read Server
+server = read_server fqdn
+
+if server.to_a.empty? then
+  puts "Error, server not found in CMDB"
+  puts
+  puts "  Usage: cmdbtocobbler <CMDB fqdn>"
+  puts
+  exit 1
+else
+  # Server entry found
+  cobblerEntry = Hash.new
+
+  serverdn = server['dn'].to_s
+
+  cobblerEntry['shortname'] = server['cn'].to_s
+  #puts "  servercn: " + cobblerEntry['servercn'].to_s
+  cobblerEntry['hostname'] = server['hostName'].to_s
+  cobblerEntry['profile'] = server['cobblerprofile'].to_s
+  cobblerEntry['comment'] = server['description'].to_s
+
+  # Read NIC0
+  nic0 = Hash.new
+  nic0 = read_eth0 serverdn
+
+  if !nic0.to_a.empty?
+
+    # MUST: cn deviceIndex ifcfgType ifcfgOnboot 
+    # MAY:  ifcfgBootproto ifcfgVlan ifcfgNMControlled ifcfgMTU ifcfgBridge ifcfgSlave ifcfgMaster
+    #       ifcfgIPAddress ifcfgNetmask ifcfgGateway ifcfgHWAddr 
+    #       ifcfgBondingOpts ifcfgEthtoolOpts ifcfgBondingOpts ifcfgUserCtl ifcfgIPV6Init 
+    #       vBridge pxeBoot description
+
+    cobblerEntry['interface']  = nic0['cn'].to_s
+    cobblerEntry['macaddress'] = nic0['ifcfgHWAddr'].to_s
+    cobblerEntry['ipaddress']  = nic0['ifcfgIPAddress'].to_s
+    cobblerEntry['netmask']    = nic0['ifcfgNetmask'].to_s
+    cobblerEntry['gateway']    = nic0['ifcfgGateway'].to_s
+  end
+
+  # Create cobbler system entry
+  cobbler_system_add cobblerEntry
+
+end
+
+exit 0
+

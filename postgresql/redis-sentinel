@@ -1,0 +1,75 @@
+#/bin/sh
+
+# chkconfig: 345 90 60
+
+### BEGIN INIT INFO
+# Provides:
+# Required-Start:
+# Required-Stop:
+# Should-Start:
+# Should-Stop:
+# Default-Start:
+# Default-Stop:
+# Short-Description: This service is the watchdog process for redis cluster
+# Description:
+### END INIT INFO
+
+# Source function library.
+. /etc/init.d/functions
+
+PORT="26379"
+EXEC=/usr/local/bin/redis-sentinel
+PROG=redis-sentinel
+
+PIDFILE=/var/run/redis-sentinel_26379.pid
+CONF="/etc/redis/sentinel.conf"
+LOGFILE=/var/log/redis-sentinel_26379.log
+LOCKFILE=/var/lock/subsys/redis-sentinel
+
+case "$1" in
+    start)
+    	if [ $UID -ne 0 ] ; then
+        	echo $"User has insufficient privilege."
+        	exit 4
+    	fi
+        if [ ! -f $LOGFILE ] ; then
+		touch $LOGFILE
+	fi
+        if [ -f $PIDFILE ]
+        then
+                echo "$PIDFILE exists, process is already running or crashed"
+        else
+                echo "Starting Redis-sentinel server..."
+                #daemon $EXEC $CONF --pidfile $PIDFILE 2>&1 > $LOGFILE  &
+                daemon "nohup $EXEC $CONF >> $LOGFILE 2>&1 &"
+                RETVAL=$?
+		echo
+                PID=$!
+    		[ $RETVAL -eq 0 ] && touch $LOCKFILE
+                echo $PID > $PIDFILE
+        fi
+        ;;
+    stop)
+    	if [ $UID -ne 0 ] ; then
+        	echo $"User has insufficient privilege."
+        	exit 4
+    	fi
+        if [ ! -f $PIDFILE ]
+        then
+                echo "$PIDFILE does not exist, process is not running"
+        else
+                echo "Stopping ..."
+
+                PID=$(cat $PIDFILE)
+                killproc $PROG
+		RETVAL=$?
+		echo
+		[ $RETVAL -eq 0 ] && rm -f $LOCKFILE && rm -rf $PIDFILE
+
+                echo "Redis-sentinel stopped"
+        fi
+        ;;
+    *)
+        echo "Please use start or stop as an argument"
+        ;;
+esac

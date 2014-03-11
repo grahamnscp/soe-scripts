@@ -1,0 +1,93 @@
+#/bin/sh
+
+# chkconfig: 345 90 60
+
+### BEGIN INIT INFO
+# Provides:
+# Required-Start:
+# Required-Stop:
+# Should-Start:
+# Should-Stop:
+# Default-Start:
+# Default-Stop:
+# Short-Description: This service is the replication manager for the postgresql cluster
+# Description:
+### END INIT INFO
+
+# Source function library.
+. /etc/init.d/functions
+
+# For SELinux we need to use 'runuser' not 'su'
+if [ -x /sbin/runuser ]
+then
+    SU=runuser
+else
+    SU=su
+fi
+
+EXEC=/usr/pgsql-9.3/bin/repmgrd
+EXECOPTS=--verbose
+PROG=repmgrd
+CONF=/var/lib/pgsql/repmgr/repmgr.conf
+
+RUNUSER=postgres
+RUNGROUP=postgres
+
+PIDFILE=/var/run/repmgrd.pid
+LOGFILE=/var/log/pgsql/repmgrd.log
+LOCKFILE=/var/lock/subsys/repmgrd
+
+case "$1" in
+    start)
+    	if [ $UID -ne 0 ] ; then
+        	echo $"User has insufficient privilege."
+        	exit 4
+    	fi
+        if [ ! -f $LOGFILE ]
+        then
+			touch $LOGFILE
+			chown $RUNUSER:$RUNGROUP $LOGFILE
+	fi
+        if [ -f $PIDFILE ]
+        then
+            echo "$PIDFILE exists, process is already running or crashed"
+        else
+            echo >> $LOGFILE
+            DATETIME=`date +"%d-%b-%Y %H:%M:%M %Z"`
+            echo "[$DATETIME]: Starting $PROG server..." | tee -a $LOGFILE
+            #daemon "nohup $EXEC -f $CONF $EXECOPTS >> $LOGFILE 2>&1 &"
+            #$SU -l $RUNUSER -c "$EXEC -f $CONF $EXECOPTS >> $LOGFILE 2>&1 &" < /dev/null
+            daemon --user $RUNUSER "nohup $EXEC -f $CONF $EXECOPTS >> $LOGFILE 2>&1 &"
+            RETVAL=$?
+			echo
+            PID=$!
+    		[ $RETVAL -eq 0 ] && touch $LOCKFILE
+            echo $PID > $PIDFILE
+        fi
+        ;;
+    stop)
+    	if [ $UID -ne 0 ] ; then
+        	echo $"User has insufficient privilege."
+        	exit 4
+    	fi
+        if [ ! -f $PIDFILE ]
+        then
+            echo "$PIDFILE does not exist, process is not running"
+        else
+            DATETIME=`date +"%d-%b-%Y %H:%M:%M %Z"`
+            echo "[$DATETIME]: Stopping $PROG ..." | tee -a $LOGFILE
+
+            PID=$(cat $PIDFILE)
+            killproc $PROG
+	    RETVAL=$?
+	    echo
+	    [ $RETVAL -eq 0 ] && rm -f $LOCKFILE && rm -rf $PIDFILE
+
+            echo "$PROG stopped."
+        fi
+        ;;
+    *)
+        echo "Please use start or stop as an argument"
+        ;;
+esac
+
