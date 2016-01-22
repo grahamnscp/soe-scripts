@@ -1,0 +1,90 @@
+#!/bin/bash
+#
+#. /etc/rc.d/init.d/functions
+
+prog=synchost-services
+
+start() {
+    echo -n $"Starting $prog: "
+    /bin/systemctl start  mongod.service
+    sleep 20
+    echo -n .
+    /bin/systemctl start  qpidd.service
+    echo -n .
+    /bin/systemctl start  pulp_resource_manager.service
+    echo -n .
+    /bin/systemctl start  pulp_workers.service
+    echo -n .
+    /bin/systemctl start  pulp_celerybeat.service
+    echo -n .
+    /bin/systemctl start  httpd.service
+    echo -n .
+    /bin/systemctl start  foreman-tasks.service
+    echo -n .
+    echo
+    return 0
+}
+
+stop() {
+    echo -n $"Stopping $prog: "
+    /bin/systemctl stop  foreman-tasks.service
+    echo -n .
+    /bin/systemctl stop  httpd.service
+    echo -n .
+    /bin/systemctl stop  pulp_celerybeat.service
+    echo -n .
+    /bin/systemctl stop  pulp_workers.service
+    echo -n .
+    /bin/systemctl stop  pulp_resource_manager.service
+    echo -n .
+    /bin/systemctl stop  qpidd.service
+    echo -n .
+    /bin/systemctl stop  mongod.service
+    echo -n .
+    echo
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+status() {
+    echo $"Status $prog services: "
+    echo -n "  mongod:		"
+    /bin/systemctl status  mongod.service | grep Active:
+    echo -n "  qpidd:		"
+    /bin/systemctl status  qpidd.service | grep Active:
+    echo -n "  pulp_resource_manager:"
+    /bin/systemctl status  pulp_resource_manager.service | grep Active:
+    echo -n "  pulp_workers: 	"
+    /bin/systemctl status  pulp_workers.service | grep Active:
+    echo -n "  pulp_celerybeat: 	"
+    /bin/systemctl status  pulp_celerybeat.service | grep Active:
+    echo -n "  httpd: 		"
+    /bin/systemctl status  httpd.service | grep Active:
+    echo -n "  foreman-tasks: 	"
+    /bin/systemctl status  foreman-tasks.service | grep Active:
+    return 0
+}
+
+case "$1" in
+    start|stop)
+        $1
+    ;;
+
+    restart)
+        restart
+    ;;
+
+    status)
+        status
+    ;;
+    *)
+        echo $"Usage: $prog {start|stop|restart|status}"
+        exit 1
+esac
+
+exit 0
+

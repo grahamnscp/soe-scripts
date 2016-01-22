@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+
+# Sample command:
+#   mkisofs -r -D -graft-points \
+#           -path-list /var/lib/pulp/working/repos/rhel-server-rhscl-7-rpms-7Server-x86_64/distributors/export_distributor/realized/pulpiso-sR2vBE \
+#           -o /var/lib/pulp/working/repos/rhel-server-rhscl-7-rpms-7Server-x86_64/distributors/export_distributor/output/rhel-server-rhscl-7-rpms-7Server-x86_64-2015-05-01T10.09-01.iso
+
+# Configure alternatives:
+#  alternatives --install /usr/bin/mkisofs mkisofs /usr/bin/mkisofs-dummy 120
+#  alternatives --config mkisofs
+
+# Parse arguments
+PATH_LIST=/tmp
+ISO_FILE=/tmp/dummy_$$.iso
+echo OPTIONS=$*
+while [ $# -gt 0 ]
+do
+   case $1 in
+      -r) ;;
+      -D) ;;
+      -graft-points) ;;
+      -path-list) PATH_LIST=`eval echo $2`; shift ;;
+      -o) ISO_FILE=`eval echo $2`; shift ;;
+      (-) shift; break ;;
+      (-*) echo "$0: error; unrecognised option $1" 1>&2; exit 1 ;;
+      *) break ;;
+   esac
+   shift
+done
+
+# make a dummy iso file
+echo "Dummy iso: ($ISO_FILE) for content: $PATH_LIST" > $ISO_FILE
+
+exit 0
