@@ -27,15 +27,16 @@ LOGDIR=/var/log/synchost-batch
 LOGFILE=$LOGDIR/synchost-content-export-${DATE}-${TIME}.log
 MAXLOGS=2
 #
-# Example usage: katello-disconnected export -t $EXPORT_DIR -r repo1,repo2 -o -s $EXPORT_START_TIME -n $EXPORT_END_TIME
 #EXPORT_DIR=/export/katello-export
 EXPORT_DIR=/var/lib/pulp/export
 LAST_EXPORT_DATE_FILE=/var/tmp/synchost-content-exported-to-date.txt
 EXPORT_START_TIME=`cat $LAST_EXPORT_DATE_FILE`
 EXPORT_END_TIME=`/bin/date +'%Y-%m-%d 12:00:00'`
-#EXPORT_CMD="/usr/bin/katello-disconnected export -t $EXPORT_DIR -o -s \"$EXPORT_START_TIME\" -n \"$EXPORT_END_TIME\""
-EXPORT_CMD="/usr/bin/katello-disconnected export -t $EXPORT_DIR -r rhel-7-server-rh-common-rpms-7Server-x86_64 -o -s \"$EXPORT_START_TIME\" -n \"$EXPORT_END_TIME\""
 THIS_EXPORT_DATE=`/bin/date +'%Y-%m-%d 00:00:00'`
+#
+# Example usage: katello-disconnected export -t $EXPORT_DIR -r repo1,repo2 -o -s $EXPORT_START_TIME -n $EXPORT_END_TIME
+#EXPORT_CMD="/usr/bin/katello-disconnected export -t $EXPORT_DIR -r rhel-7-server-rh-common-rpms-7Server-x86_64 -o -s \"$EXPORT_START_TIME\" -n \"$EXPORT_END_TIME\""
+EXPORT_CMD="/usr/bin/katello-disconnected export -t $EXPORT_DIR -o -s \"$EXPORT_START_TIME\" -n \"$EXPORT_END_TIME\""
 #
 
 # Functions:
