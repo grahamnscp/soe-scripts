@@ -1,0 +1,523 @@
+#!/bin/bash
+#
+# Requires: pulp-admin-client pulp-rpm-admin-extensions
+
+DATE=`/bin/date +'%Y%m%d'`
+TIME=`/bin/date +'%H%M'`
+DOM=`/bin/date +'%d'`
+
+LOGDIR=/var/log/synchost-batch
+LOGFILE=$LOGDIR/synchost-pulpadmin-export-${DATE}-${TIME}.log
+MAXLOGS=2
+
+# Functions:
+check_logdir () {
+   if [ ! -d "$LOGDIR" ]; then
+     mkdir -p $LOGDIR
+  fi
+}
+
+logmsg () {
+  /bin/echo `date +'%Y%m%d-%H:%M:%S'` "[synchost-export] $1" | tee -a $LOGFILE
+}
+
+purge_log_files () {
+   SYNCLOGS=`/bin/ls -l $LOGDIR | /bin/grep $1 | /usr/bin/wc -l`
+   if [ $SYNCLOGS -gt $MAXLOGS ]
+   then
+     while [ $SYNCLOGS -gt $MAXLOGS ]; do
+       OLDESTLOG=`/bin/ls -cltrh $LOGDIR | /bin/grep $1 | /usr/bin/head -1 | /bin/awk '{print $9}'`
+       logmsg "purging $LOGDIR/$OLDESTLOG"
+       /bin/rm -rf $LOGDIR/$OLDESTLOG
+       SYNCLOGS=`/bin/ls -l $LOGDIR | /bin/grep $1 | /usr/bin/wc -l`
+     done
+   fi
+}
+
+# Main
+
+# Check logdir exists, if not create it
+check_logdir
+touch $LOGFILE
+
+logmsg "Started.."
+
+TIME_START=`date +"%s"`
+
+# Read any command line parameters
+while getopts ":h,:p,:c,:3,:s:" opts; do
+  case $opts in
+    p)
+      PUPPET=1
+      ;;
+    c)
+      RPMS=1
+      ;;
+    3)
+      THDPARTY=1
+      ;;
+    s)
+      FROMDATE=$OPTARG
+      if [[ $FROMDATE =~ ^[0-9]{4}-(0[0-9]|1[0-2])-([0-2][0-9]|3[0-1])$ ]]; then
+        start_date=$FROMDATE
+        start_date_override=1
+      else
+        logmsg "Invalid date. Format is YYYY-MM-DD, Exiting.."
+        exit 1
+      fi
+      ;;
+    h)
+      logmsg "sat61_export options:"
+      logmsg "  -h              Help"
+      logmsg "  -c              Include Red Hat CDN content"
+      logmsg "  -p              Include puppet-forge content"
+      logmsg "  -3              Include 3rd party repo content"
+      logmsg "  -s YYYY-MM-DD   Start date: export packages synchronised since YYYY-MM-DD 00:00:00"
+      logmsg ""
+      logmsg "Running sat61_export with no start date defined will export the requested content, from the date of the"
+      logmsg "last successful execution of the script."
+      logmsg "Exiting.."
+      exit 1
+      ;;
+    \?)
+      logmsg "Invalid Option -$OPTARG" 
+      logmsg "Exiting.."
+      exit 1
+      ;;
+    :)
+      logmsg "Option -$OPTARG requires an argument." >&2
+      logmsg "Exiting.."
+      exit 1
+      ;;
+    *)
+      ;;
+  esac
+done
+
+if [ -z $RPMS ] && [ -z $PUPPET ] && [ -z $THDPARTY ]; then
+  logmsg "Error: You must include at least one of CDN (-c), 3rd Party (-3)  or Puppet (-p) content to export."
+  logmsg "Run '$0 -h' for help."
+  logmsg "Exiting.."
+  exit 1
+fi
+
+# Set the export start date
+today=`date '+%Y-%m-%d'`
+
+# Set the export dir
+cdn_export_dir="/export/sat-export/cdn-export_$today"
+pup_export_dir="/export/sat-export/puppet-export_$today"
+tp_export_dir="/export/sat-export/3rdparty-export_$today"
+
+# Where are the 3rd party repos
+tp_mirrordir="/var/sat-repomirror"
+
+
+if [ -z $start_date ]; then
+  # Set an initial date in case there is no marker set
+  rpm_start_date="2000-01-01T00:00:00"
+  puppet_start_date=$rpm_start_date
+  tp_start_date==$rpm_start_date
+
+  # Read the marker date from the last export file
+  if [ ! -z $RPMS ]; then
+    if [ -f /usr/local/etc/lastexport_cdn.dat ]; then
+      rpm_start_date=`tail -n1 /usr/local/etc/lastexport_cdn.dat`"T00:00:00"
+    fi
+  fi
+  if [ ! -z $PUPPET ]; then
+    if [ -f /usr/local/etc/lastexport_puppet.dat ]; then
+      puppet_start_date=`tail -n1 /usr/local/etc/lastexport_puppet.dat`"T00:00:00"
+    fi
+  fi
+  if [ ! -z $THDPARTY ]; then
+    if [ -f /usr/local/etc/lastexport_3rdparty.dat ]; then
+      tp_start_date=`tail -n1 /usr/local/etc/lastexport_3rdparty.dat`"T00:00:00"
+    fi
+  fi
+else
+  rpm_start_date=$start_date
+  puppet_start_date=$start_date
+  tp_start_date=$start_date
+fi
+
+
+if [ ! -z $RPMS ]; then
+  logmsg "Exporting CDN content synchronised after $rpm_start_date."
+fi
+if [ ! -z $PUPPET ]; then
+  logmsg "Exporting Puppet content synchronised after $puppet_start_date."
+fi
+if [ ! -z $THDPARTY ]; then
+  logmsg "Exporting 3rd party RPM content synchronised after $rpm_start_date."
+fi
+
+logmsg "CDN export directory: $cdn_export_dir"
+if [ ! -z $RPMS ]; then
+  if [ -d $cdn_export_dir ]; then
+    logmsg "Error: Export dir $cdn_export_dir already exists. Exiting.."
+    exit 1
+  else
+    mkdir -p $cdn_export_dir && chmod 0755 $cdn_export_dir
+  fi
+fi
+
+logmsg "Puppet export directory: $pup_export_dir"
+if [ ! -z $PUPPET ]; then
+  if [ -d $pup_export_dir ]; then
+    logmsg "Error: Export dir $pup_export_dir already exists. Exiting.."
+    exit 1
+  else
+    mkdir -p $pup_export_dir/puppet-forge && chmod 0755 $pup_export_dir
+  fi
+fi
+
+logmsg "ThirdParty export directory: $cdn_export_dir"
+if [ ! -z $THDPARTY ]; then
+  if [ -d $tp_export_dir ]; then
+    logmsg "Error: Export dir $tp_export_dir already exists. Exiting.."
+    exit 1
+  else
+    mkdir -p $tp_export_dir && chmod 0755 $tp_export_dir
+  fi
+fi
+logmsg "Done"
+
+# Login to pulp-admin
+logmsg "Logging into pulp-admin.."
+pulp-admin login -u admin -p admin | tee -a $LOGFILE
+if [ $? -ne 0 ]; then
+  logmsg "Error: pulp-admin login failed, Exiting.."
+  exit 1
+fi
+
+if [ ! -z $RPMS ]; then
+  logmsg "Publishing pulp content.."
+
+  # Loop through each repo
+  for repo in `katello-disconnected list | egrep -v "Red Hat|uppet|^$"`; do
+    logmsg " Processing repo: $repo"
+
+    # Run the publish
+    pulp-admin rpm repo publish run --repo-id $repo | tee -a $LOGFILE
+    #pulp-admin rpm repo publish run --repo-id $repo 
+
+    if [ $? -eq 0 ]; then
+      logmsg "Done"
+    else
+      logmsg "Error: repo publish failed, Exiting.."
+      exit 1
+    fi
+  done
+fi
+
+# Logout of pulp-admin
+logmsg "Logging out from pulp-admin.."
+pulp-admin logout | tee -a $LOGFILE
+
+if [ ! -z $RPMS ]; then
+  # From the published repo (which contains ALL pulp content) we need to extract the incremental changes.
+  # We do this here using 'find' as a pulp-admin export creates a different filesystem structure to that
+  # expected by satellite.
+  #
+  # When content is published by pulp the RPMs maintain the date stamp that they were sync'd to our system on.
+  # Regular content sync should ensure that only incremental updates are trapped by the find command and all
+  # resulting files are added to the content-export archive.
+  #
+  # Once we find the relevent files we create a copy of the file structure in our export dir for further checks.
+
+  logmsg "Finding updated RPM content newer than: $(date +%Y-%m-%d -d "$rpm_start_date")  and copying to: $cdn_export_dir.."
+
+  cd /var/lib/pulp/published/yum/http/repos
+  find -L . -type f -newerct $(date +%Y-%m-%d -d "$rpm_start_date") -exec cp --parents -Lrp {} $cdn_export_dir \; 2>&1 | tee -a $LOGFILE
+
+  if [ $? -eq 0 ]; then
+    logmsg "Done"
+  else
+    logmsg "Error: finding and copying CDN content to $cdn_export_dir failed, Exiting.."
+    exit 1
+  fi
+
+
+  # Run RPM GPG check on all packages to be exported
+  logmsg "Checking RPM files integrity.."
+
+  # (Re)create the checksig script
+  cat << EOF > /usr/local/bin/checksig.sh
+#!/bin/sh
+if [ \`rpm -K \$1 | grep -c "NOT OK"\` -ne 0 ]; then
+  echo \$1 >> /var/run/rpmfail
+fi
+EOF
+  chmod 755 /usr/local/bin/checksig.sh
+
+  rm -f /var/run/rpmfail
+  cd $cdn_export_dir && find . -name *.rpm -exec /usr/local/bin/checksig.sh {} \;
+
+  # Check if the checksig script had an error with any packages
+  if [ -f /var/run/rpmfail ]; then
+    logmsg "Fail"
+    logmsg "RPM Integrity verification failed for the following packages"
+    cat /var/run/rpmfail | sed 's/^/   /' | tee -a $LOGFILE
+    logmsg "EXPORT ABORTED, Exiting.."
+    exit 1
+  else
+    logmsg "Passed"
+  fi
+
+
+  # Create the export archive and split into DVD size chunks
+  logmsg "Creating CDN export archive.."
+
+  cd $cdn_export_dir
+  tar -czpf content-export_${today} content listing 2>&1 | tee -a $LOGFILE
+
+  if [ $? -eq 0 ]; then
+    logmsg "Done"
+  else
+    logmsg "Error: creating CDN archive failed, Exiting.."
+    exit 1
+  fi
+
+  logmsg "Splitting CDN archive.."
+
+  split -d -b 3800M $cdn_export_dir/content-export_${today} $cdn_export_dir/content-export_${today}- 2>&1 | tee -a $LOGFILE
+
+  if [ $? -eq 0 ]; then
+    n=`ls -l $cdn_export_dir/content-export_${today}-* | wc -l`
+    logmsg "Done - $n part(s)"
+  else
+    logmsg "Error: splitting CDN archive failed, Exiting.."
+    exit 1
+  fi
+
+  #logmsg "Exporting the following packages.."
+  find content -name *.rpm > /tmp/cdn_export
+  #cat /tmp/cdn_export | sed 's/^/   /' | sort | tee -a $LOGFILE
+  NUMPKGS=`cat /tmp/cdn_export | wc -l`
+  logmsg "$NUMPKGS packages exported."
+
+  # Clean up
+  rm -rf $cdn_export_dir/content-export_${today} $cdn_export_dir/content $cdn_export_dir/listing /usr/local/bin/checksig.sh
+fi
+
+
+if [ ! -z $PUPPET ]; then
+  logmsg "Exporting updated Puppet content.."
+
+  if [ ! -d /var/sat-puppetmirror ]; then
+    logmsg "Failed"
+    skip_puppet=1
+  else
+    cd /var/sat-puppetmirror
+    find -L . -type f -newerct $(date +%Y-%m-%d -d "$puppet_start_date") -exec cp --parents -Lrp {} $pup_export_dir/puppet-forge \;
+    logmsg "Done"
+  fi
+
+  # Create the export archive and split into DVD size chunks
+  logmsg "Creating Puppet export archive.."
+
+  if [ -d $pup_export_dir/puppet-forge ]; then
+    if [ -z $skip_puppet ]; then
+      cd $pup_export_dir && tar -czpf puppet-export_${today} puppet-forge
+      logmsg "Done"
+
+      logmsg "Splitting Puppet archive.."
+      split -d -b 3800M $pup_export_dir/puppet-export_${today} $pup_export_dir/puppet-export_${today}-
+      n=`ls -l $pup_export_dir/puppet-export_${today}-* | wc -l`
+      logmsg  "Done - $n part(s)"
+
+      # Create human-readable import manifest
+      find puppet-forge -name *.gz > /tmp/puppet_export
+      logmsg "Exporting the following modules.."
+      cat /tmp/puppet_export | sed 's/^/   /' | sort | tee -a $LOGFILE
+
+      # Clean up
+      rm -rf $pup_export_dir/puppet-export_${today} $pup_export_dir/puppet-forge
+    else
+      logmsg "Skipped"
+    fi
+  else
+    logmsg "Skipped - No new content"
+    skip_puppet=1
+  fi
+fi
+
+
+if [ ! -z $THDPARTY ]; then
+  logmsg "Exporting updated 3rd Party RPM content.."
+
+  cd $tp_mirrordir
+  find -L . -type f -newerct $(date +%Y-%m-%d -d "$tp_start_date") -exec cp --parents -Lrp {} $tp_export_dir \;
+  logmsg "Done"
+
+  # Run RPM GPG check on all packages to be exported
+  logmsg "Checking RPM integrity.."
+
+  # (Re)create the checksig script
+  cat << EOF > /usr/local/bin/checksig.sh
+#!/bin/sh
+if [ \`rpm -K \$1 | grep -c "NOT OK"\` -ne 0 ]; then
+  echo \$1 >> /var/run/rpmfail
+fi
+EOF
+  chmod 755 /usr/local/bin/checksig.sh
+
+  rm -f /var/run/rpmfail
+  cd $tp_export_dir && find . -name *.rpm -exec /usr/local/bin/checksig.sh {} \;
+
+  # Check if the checksig script had an error with any packages
+  if [ -f /var/run/rpmfail ]; then
+    logmsg "Fail"
+    logmsg "RPM Integrity verification failed for the following packages:"
+    cat /var/run/rpmfail | sed 's/^/   /' | tee -a $LOGFILE
+    logmsg "EXPORT ABORTED, Exiting.."
+    exit 1
+  else
+    logmsg "Pass"
+  fi
+
+
+  # Create the export archive and split into DVD size chunks
+  logmsg printf "Creating 3rd Party RPM export archive.."
+
+  cd $tp_export_dir && tar -czpf 3rdparty-export_${today} . --exclude=./3rdparty-export_* 2>/dev/null
+  logmsg "Done"
+
+  logmsg "Splitting RPM archive.."
+  split -d -b 3800M $tp_export_dir/3rdparty-export_${today} $tp_export_dir/3rdparty-export_${today}-
+  n=`ls -l $tp_export_dir/3rdparty-export_${today}-* | wc -l`
+  logmsg "Done - $n part(s)"
+
+  # Create human-readable import manifest
+  find . -name *.rpm > /tmp/3rdparty_export
+  #logmsg "Exporting the following packages.."
+  #cat /tmp/3rdparty_export | sed 's/^/   /' | sort | tee -a $LOGFILE
+
+  # Clean up
+  rm -rf $tp_export_dir/3rdparty-export_${today} /usr/local/bin/checksig.sh
+  find $tp_export_dir/* -maxdepth 0 -type d -exec rm -rf {} \;
+fi
+
+
+# Next we need to get the sha256sum of each file to be imported.
+
+logmsg "Creating sha256 hashes.."
+
+if [ ! -z $RPMS ]; then
+  if [ -f $cdn_export_dir/content-export_${today}-00 ]; then
+    cd $cdn_export_dir && sha256sum content-export_${today}-* > content-export_${today}.sha256
+  fi
+fi
+if [ ! -z $PUPPET ]; then
+  if [ -z $skip_puppet ]; then
+    cd $pup_export_dir
+    sha256sum puppet-export_${today}-* > puppet-export_${today}.sha256
+  fi
+fi
+if [ ! -z $THDPARTY ]; then
+  if [ -f $tp_export_dir/3rdparty-export_${today}-00 ]; then
+    cd $tp_export_dir && sha256sum 3rdparty-export_${today}-* > 3rdparty-export_${today}.sha256
+  fi
+fi
+logmsg "Done"
+
+
+# Create the unsplit/expand script
+
+logmsg "Creating extraction script..."
+
+if [ ! -z $RPMS ]; then
+  cat << EOF > $cdn_export_dir/content-export-expand.sh
+#!/bin/bash
+if [ -f content-export_${today}-00 ]; then
+  sha256sum -c content-export_${today}.sha256
+  if [ \$? -eq 0 ]; then
+    cat content-export_${today}-* | tar xzpf -
+  else
+    echo "content-export_${today} checksum failure"
+  fi
+fi
+echo "*** Expanding CDN archives complete. ***"
+EOF
+  chmod 755 $cdn_export_dir/*.sh
+  chmod 755 $cdn_export_dir
+fi
+
+if [ ! -z $PUPPET ]; then
+  if [ -z $skip_puppet ]; then
+    cat << EOF > $pup_export_dir/puppet-export-expand.sh
+#!/bin/bash
+if [ -f puppet-export_${today}-00 ]; then
+  sha256sum -c puppet-export_${today}.sha256
+  if [ \$? -eq 0 ]; then
+    cat puppet-export_${today}-* | tar xzpf -
+  else
+    echo "puppet-export_${today} checksum failure"
+  fi
+fi
+echo "*** Expanding Puppet archives complete. ***"
+EOF
+    chmod 755 $pup_export_dir/*.sh
+  fi
+fi
+
+if [ ! -z $THDPARTY ]; then
+  cat << EOF > $tp_export_dir/3rdparty-export-expand.sh
+#!/bin/bash
+if [ -f 3rdparty-export_${today}-00 ]; then
+  sha256sum -c 3rdparty-export_${today}.sha256
+  if [ \$? -eq 0 ]; then
+    cat 3rdparty-export_${today}-* | tar xzpf -
+  else
+    echo "3rdparty-export_${today} checksum failure"
+  fi
+fi
+echo "*** Expanding ThirdParty archives complete. ***"
+EOF
+  chmod 755 $tp_export_dir/*.sh
+fi
+logmsg "Done"
+
+
+# Write the export timestamp
+if [ -z $start_date_override ]; then
+  if [ ! -z $RPMS ]; then
+    logmsg "Updating last CDN export datestamp (/usr/local/etc/lastexport_cdn.dat) to: $today"
+    echo $today >> /usr/local/etc/lastexport_cdn.dat
+    logmsg "CDN export completed (directory: $cdn_export_dir)"
+  fi
+  if [ ! -z $PUPPET ]; then
+    logmsg "Updating last Puppet export datestamp.."
+    if [ -z $skip_puppet ]; then
+      echo $today >> /usr/local/etc/lastexport_puppet.dat
+      logmsg "Done"
+    else
+      logmsg "Skipped"
+    fi
+    logmsg "Puppet export completed."
+  fi
+  if [ ! -z $THDPARTY ]; then
+    logmsg "Updating last 3rd Party RPM export datestamp.."
+    echo $today >> /usr/local/etc/lastexport_3rdparty.dat
+    logmsg "Done"
+  fi
+fi
+
+#printf "Finished exporting content, copy the following files to your disconnected host:\n"
+#if [ ! -z $RPMS ]; then printf "   $cdn_export_dir/*\n"; fi
+#if [ ! -z $PUPPET ]; then
+#  if [ -z $skip_puppet ]; then
+#    printf "   $pup_export_dir/*\n"
+#  fi
+#fi
+
+logmsg "Purging old log files (MAXLOGS=$MAXLOGS)"
+purge_log_files "synchost-pulpadmin-export-"
+
+TIME_COMPLETE=`date +"%s"`
+DURATION=`date -u -d "0 $TIME_COMPLETE seconds - $TIME_START seconds" +"%H:%M:%S"`
+logmsg "Duration for extract content batch: $DURATION"
+
+logmsg "All done, exiting.."
+exit 0
