@@ -1,0 +1,2 @@
+REPO:|glocal-sat62-org|Red Hat Enterprise Linux Server|Red Hat Enterprise Linux 7 Server - Supplementary RPMs x86_64 7Server
+REPO:|glocal-sat62-org|Red Hat Enterprise Linux Server|Red Hat Satellite Tools 6.2 for RHEL 7 Server RPMs x86_64
